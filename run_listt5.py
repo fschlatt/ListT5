@@ -78,7 +78,7 @@ class ListT5Evaluator():
         start = time.time()
         print("Loading model..")
         print(f"Loading fid model from {self.args.model_path}")
-        model = FiDT5.from_pretrained(self.args.model_path).to('cuda')
+        model = FiDT5.from_pretrained(self.args.model_path).to(torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
         end = time.time()
         print(f"Done! took {end-start} second")
         model.eval()
@@ -90,7 +90,7 @@ class ListT5Evaluator():
     def make_input_tensors(self, texts):
         raw = self.tok(texts, return_tensors='pt',
                 padding=self.args.padding, max_length=self.args.max_input_length,
-                truncation=True).to('cuda')
+                truncation=True).to(torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
         input_tensors = {'input_ids': raw['input_ids'].unsqueeze(0),
                 'attention_mask': raw['attention_mask'].unsqueeze(0)}
         return input_tensors
@@ -104,7 +104,7 @@ class ListT5Evaluator():
 
     def run_inference(self, input_tensors):
         output = self.model.generate(**input_tensors,
-                max_length = self.args.max_gen_length,
+                max_length = self.args.listwise_k + 2,
                 return_dict_in_generate=True, output_scores=True)
         self.num_forward += 1
         return output
@@ -248,8 +248,8 @@ class ListT5Evaluator():
                 return_tensors='pt',
                 max_length = self.args.max_input_length,
                 truncation=True) for x in full_input_texts_batchwise]
-            batch_inputids = torch.stack([x['input_ids'] for x in raw_tensors_batchwise]).to('cuda')
-            batch_attnmasks = torch.stack([x['attention_mask'] for x in raw_tensors_batchwise]).to('cuda')
+            batch_inputids = torch.stack([x['input_ids'] for x in raw_tensors_batchwise]).to(torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
+            batch_attnmasks = torch.stack([x['attention_mask'] for x in raw_tensors_batchwise]).to(torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
             #he = time.time()
             output = self.run_inference({'input_ids': batch_inputids, 'attention_mask': batch_attnmasks})
             #ho = time.time()
@@ -295,7 +295,7 @@ class ListT5Evaluator():
         temp = []
         for i, instance in tqdm(enumerate(self.test_file), total=len(self.test_file)):
             question = instance[self.args.question_text_key]
-            topk_ctxs = [f"{x[self.args.title_key]} {x[self.args.text_key]}".strip() for x in instance[self.args.firststage_result_key]][:self.args.topk]
+            topk_ctxs = [f"{x.get(self.args.title_key, '')} {x[self.args.text_key]}".strip() for x in instance[self.args.firststage_result_key]][:self.args.topk]
 
             # handling exceptions
             # (2) prepare for skipping those that don't have gold in topk(100)
@@ -399,15 +399,11 @@ class ListT5Evaluator():
                     self.write_jsonl_file(self.args.output_path, temp)
                     print(f"Writing jsonl to {self.args.output_path} done! for length: {len(temp)}")
         print(f'%%%%%%%%%DONE%%%%%%%%%%%')
-        self.write_jsonl_file(self.args.output_path, temp)
-        print(f"Writing jsonl to {self.args.output_path} done, for full length!")
-        try:
-            ndcg_10, string = run_rerank_eval(temp, combined=True)
-            print(f"ndcg: {ndcg_10}")
-        except:
-            print('Error happened during running run_rerank_eval. skipping evaluation')
-            return 'None', 'None'
-        return ndcg_10, string
+        self.write_run_file(self.args.output_path, temp)
+        print(f"Writing run file to {self.args.output_path} done, for full length!")
+    
+    def write_run_file(self, path, data):
+        pass
 
 def run_reranker(args):
     module = ListT5Evaluator(args)
@@ -416,7 +412,7 @@ def run_reranker(args):
     num_forward = module.num_forward
     return ndcg_10, scores, flops, num_forward
 
-def main():
+def main(args=None):
     parser = argparse.ArgumentParser()
     # Dataset key setup
     parser.add_argument('--firststage_result_key', default='bm25_results', type=str)
@@ -447,7 +443,7 @@ def main():
     parser.add_argument('--measure_flops', action='store_true')
     parser.add_argument('--skip_no_candidate', action='store_true', help='skip instances with no gold qrels included at first-stage retrieval for faster inference, only works when gold qrels are available')
     parser.add_argument('--skip_issubset', action='store_true', help='skip the rest of reranking when the gold qrels is a subset of reranked output for faster inference, only works when gold qrels are available')
-    args = parser.parse_args()
+    args = parser.parse_args(args)
     if args.measure_flops:
         from deepspeed.profiling.flops_profiler import FlopsProfiler
     res = {}
