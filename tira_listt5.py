@@ -80,6 +80,7 @@ def main(args=None):
     args = parser.parse_args(args)
     args.input_path = "/tmp/re_rank.jsonl"
     args.output_path = os.environ.get("TIRA_OUTPUT_DIR", "") + "./run.txt"
+    args.max_gen_length = args.listwise_k + 2
 
     convert_jsonl(args.input_file, args.input_path)
 

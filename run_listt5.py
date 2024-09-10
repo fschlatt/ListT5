@@ -1,30 +1,36 @@
 import os
+
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['OMP_NUM_THREADS'] = '1'
-from transformers import LlamaForCausalLM
-from transformers import T5Tokenizer, T5ForConditionalGeneration, LlamaTokenizer
-import pickle
-import itertools
-import time
 import argparse
-from tqdm import tqdm
-import jsonlines
+import copy
+import glob
+import itertools
 import json
+import math
+import pickle
+import random
+import sys
+import time
+from pathlib import Path
 from pprint import pprint
+
+import jsonlines
+import numpy as np
 import pandas as pd
 import torch
-import math
-import glob
-import copy
-import numpy as np
-import pickle
-from transformers import pipeline
-import sys
-from pathlib import Path
-from FiDT5 import FiDT5
-import random
+from tqdm import tqdm
+from transformers import (
+    LlamaForCausalLM,
+    LlamaTokenizer,
+    T5ForConditionalGeneration,
+    T5Tokenizer,
+    pipeline,
+)
+
 from beir_eval import run_rerank_eval
 from beir_length_mapping import BEIR_LENGTH_MAPPING
+from FiDT5 import FiDT5
 
 sys.setrecursionlimit(10**7)
 
@@ -104,7 +110,7 @@ class ListT5Evaluator():
 
     def run_inference(self, input_tensors):
         output = self.model.generate(**input_tensors,
-                max_length = self.args.listwise_k + 2,
+                max_length = self.args.max_gen_length,
                 return_dict_in_generate=True, output_scores=True)
         self.num_forward += 1
         return output
@@ -395,15 +401,21 @@ class ListT5Evaluator():
                     reranked_instances.append(template)
                 instance[self.args.firststage_result_key] = reranked_instances
                 temp.append(instance)
-                if len(temp) % 50 == 0:
-                    self.write_jsonl_file(self.args.output_path, temp)
-                    print(f"Writing jsonl to {self.args.output_path} done! for length: {len(temp)}")
         print(f'%%%%%%%%%DONE%%%%%%%%%%%')
         self.write_run_file(self.args.output_path, temp)
         print(f"Writing run file to {self.args.output_path} done, for full length!")
     
     def write_run_file(self, path, data):
-        pass
+        with open(path, 'w') as f:
+            for entry in data:
+                qid = entry['qid']
+                results = entry[self.args.firststage_result_key]
+                for i, result in enumerate(results):
+                    rank = i + 1
+                    score = result[self.args.score_key]
+                    pid = result[self.args.pid_key]
+                    line = f"{qid} Q0 {pid} {rank} {score} listt5"
+                    f.write(line + '\n')
 
 def run_reranker(args):
     module = ListT5Evaluator(args)
